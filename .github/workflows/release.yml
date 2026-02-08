@@ -1,0 +1,239 @@
+# memoryco release workflow
+# 
+# Builds pre-compiled binaries for all supported platforms and creates
+# a GitHub Release with checksums. The memory source is pulled from a
+# private repo using a deploy key.
+#
+# Trigger: push a tag like v1.0.0
+#   git tag v1.0.0
+#   git push origin v1.0.0
+#
+# Required secrets:
+#   MEMORY_REPO_SSH_KEY - Deploy key with read access to the private memory repo
+#   MEMORY_REPO         - Full repo URL (e.g., git@github.com:memoryco/memory.git)
+
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+  # Allow manual trigger for testing
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Version tag (e.g., v1.0.0)"
+        required: true
+
+env:
+  BINARY_NAME: memoryco
+  CARGO_TERM_COLOR: always
+
+permissions:
+  contents: write  # needed to create releases
+
+jobs:
+  # ─── Build matrix ──────────────────────────────────────────────────────────
+  build:
+    name: Build ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: aarch64-apple-darwin
+            os: macos-latest
+            cross: false
+
+          - target: x86_64-apple-darwin
+            os: macos-latest
+            cross: false
+
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+            cross: false
+
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-latest
+            cross: true
+
+    steps:
+      - name: Checkout dist repo
+        uses: actions/checkout@v4
+
+      - name: Determine version
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "tag=${{ github.event.inputs.tag }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Clone memory source
+        env:
+          DEPLOY_KEY: ${{ secrets.MEMORY_REPO_SSH_KEY }}
+          MEMORY_REPO: ${{ secrets.MEMORY_REPO }}
+        run: |
+          mkdir -p ~/.ssh
+          echo "$DEPLOY_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan github.com >> ~/.ssh/known_hosts 2>/dev/null
+          GIT_SSH_COMMAND="ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no" \
+            git clone --depth 1 "$MEMORY_REPO" memory-src
+          rm -f ~/.ssh/deploy_key
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Install cross (Linux ARM)
+        if: matrix.cross
+        run: cargo install cross --git https://github.com/cross-rs/cross
+
+      # Linux dependencies for native builds
+      - name: Install Linux dependencies
+        if: runner.os == 'Linux' && !matrix.cross
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y pkg-config libssl-dev
+
+      - name: Build (native)
+        if: "!matrix.cross"
+        working-directory: memory-src
+        run: |
+          cargo build --release --target ${{ matrix.target }}
+
+      - name: Build (cross)
+        if: matrix.cross
+        working-directory: memory-src
+        run: |
+          cross build --release --target ${{ matrix.target }}
+
+      - name: Package binary
+        run: |
+          VERSION="${{ steps.version.outputs.tag }}"
+          TARGET="${{ matrix.target }}"
+          ARCHIVE="${BINARY_NAME}-${VERSION}-${TARGET}.tar.gz"
+
+          # Find the binary (package is now named memoryco)
+          BIN="memory-src/target/${TARGET}/release/${BINARY_NAME}"
+
+          if [ ! -f "$BIN" ]; then
+            echo "ERROR: Binary not found at $BIN"
+            ls -la "memory-src/target/${TARGET}/release/" || true
+            exit 1
+          fi
+
+          cp "$BIN" "${BINARY_NAME}"
+          chmod +x "${BINARY_NAME}"
+
+          # Create archive
+          tar czf "$ARCHIVE" "$BINARY_NAME"
+
+          # Generate checksum
+          if command -v sha256sum > /dev/null 2>&1; then
+            sha256sum "$ARCHIVE" > "${ARCHIVE}.sha256"
+          else
+            shasum -a 256 "$ARCHIVE" > "${ARCHIVE}.sha256"
+          fi
+
+          echo "archive=${ARCHIVE}" >> "$GITHUB_ENV"
+          echo "checksum=${ARCHIVE}.sha256" >> "$GITHUB_ENV"
+
+          echo "=== Package ==="
+          echo "Archive: $ARCHIVE"
+          ls -lh "$ARCHIVE"
+          cat "${ARCHIVE}.sha256"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.target }}
+          path: |
+            ${{ env.archive }}
+            ${{ env.checksum }}
+          if-no-files-found: error
+
+  # ─── Create release ────────────────────────────────────────────────────────
+  release:
+    name: Create Release
+    needs: build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout dist repo
+        uses: actions/checkout@v4
+
+      - name: Determine version
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "tag=${{ github.event.inputs.tag }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Collect release files
+        run: |
+          mkdir release
+          VERSION="${{ steps.version.outputs.tag }}"
+
+          # Move all archives and individual checksums into release/
+          find artifacts -type f \( -name "*.tar.gz" -o -name "*.sha256" \) \
+            -exec mv {} release/ \;
+
+          # Create combined checksums file
+          cd release
+          cat *.sha256 > "${BINARY_NAME}-${VERSION}-checksums.sha256"
+
+          # Clean up individual checksum files
+          find . -name "*.tar.gz.sha256" -delete
+
+          echo "=== Release files ==="
+          ls -lh
+          echo ""
+          echo "=== Checksums ==="
+          cat "${BINARY_NAME}-${VERSION}-checksums.sha256"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.tag }}
+          name: "memoryco ${{ steps.version.outputs.tag }}"
+          draft: false
+          prerelease: ${{ contains(steps.version.outputs.tag, '-') }}
+          generate_release_notes: false
+          body: |
+            ## memoryco ${{ steps.version.outputs.tag }}
+
+            Cognitive memory for AI. Local-first, biologically-inspired.
+
+            ### Install
+
+            ```bash
+            curl -fsSL https://memoryco.ai/install.sh | sh
+            ```
+
+            Or download the binary for your platform below.
+
+            ### Checksums
+
+            Verify your download:
+            ```bash
+            sha256sum -c memoryco-${{ steps.version.outputs.tag }}-checksums.sha256
+            ```
+
+            ### What's new
+
+            See [memoryco.ai](https://memoryco.ai) for details.
+          files: release/*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
