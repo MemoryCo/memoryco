@@ -66,7 +66,7 @@ detect_target() {
 
     case "${arch}-${os}" in
         aarch64-darwin) echo "aarch64-apple-darwin" ;;
-        x86_64-darwin)  echo "x86_64-apple-darwin" ;;
+        x86_64-darwin)  fail "Intel Mac is not supported. macOS requires Apple Silicon (M1+)." ;;
         x86_64-linux)   echo "x86_64-unknown-linux-gnu" ;;
         aarch64-linux)  echo "aarch64-unknown-linux-gnu" ;;
         *)              fail "Unsupported platform: ${arch}-${os}" ;;

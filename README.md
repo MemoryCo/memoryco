@@ -14,8 +14,7 @@ The installer downloads the right binary for your platform, caches the embedding
 
 | Platform | Architecture | Target |
 |----------|-------------|--------|
-| macOS | Apple Silicon | `aarch64-apple-darwin` |
-| macOS | Intel | `x86_64-apple-darwin` |
+| macOS | Apple Silicon (M1+) | `aarch64-apple-darwin` |
 | Linux | x86_64 | `x86_64-unknown-linux-gnu` |
 | Linux | ARM64 | `aarch64-unknown-linux-gnu` |
 

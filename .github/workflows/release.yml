@@ -46,10 +46,6 @@ jobs:
             os: macos-latest
             cross: false
 
-          - target: x86_64-apple-darwin
-            os: macos-latest
-            cross: false
-
           - target: x86_64-unknown-linux-gnu
             os: ubuntu-latest
             cross: false

@@ -2,3 +2,6 @@
 *.tar.gz
 *.sha256
 memory-src/
+
+# AI semantic search index
+.ai-index/
