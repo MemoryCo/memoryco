@@ -14,7 +14,7 @@ set -e
 
 # ─── Configuration ──────────────────────────────────────────────────────────
 
-REPO="memoryco/releases"
+REPO="memoryco/memoryco"
 BINARY_NAME="memoryco"
 DEFAULT_INSTALL_DIR="$HOME/.local/bin"
 
