@@ -37,9 +37,9 @@ fi
 
 # ─── Helpers ─────────────────────────────────────────────────────────────────
 
-info()  { printf "${BLUE}▸${RESET} %s\n" "$1"; }
-ok()    { printf "${GREEN}✓${RESET} %s\n" "$1"; }
-warn()  { printf "${YELLOW}!${RESET} %s\n" "$1"; }
+info()  { printf "${BLUE}▸${RESET} %s\n" "$1" >&2; }
+ok()    { printf "${GREEN}✓${RESET} %s\n" "$1" >&2; }
+warn()  { printf "${YELLOW}!${RESET} %s\n" "$1" >&2; }
 fail()  { printf "${RED}✗${RESET} %s\n" "$1" >&2; exit 1; }
 
 # ─── Detect platform ────────────────────────────────────────────────────────
