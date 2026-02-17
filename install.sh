@@ -23,14 +23,14 @@ INSTALL_DIR="${MEMORYCO_DIR:-$DEFAULT_INSTALL_DIR}"
 
 # ─── Colors (if terminal supports them) ─────────────────────────────────────
 
-if [ -t 1 ]; then
-    RED='\033[0;31m'
-    GREEN='\033[0;32m'
-    YELLOW='\033[0;33m'
-    BLUE='\033[0;34m'
-    DIM='\033[0;90m'
-    BOLD='\033[1m'
-    RESET='\033[0m'
+if [ -t 2 ]; then
+    RED=$(printf '\033[0;31m')
+    GREEN=$(printf '\033[0;32m')
+    YELLOW=$(printf '\033[0;33m')
+    BLUE=$(printf '\033[0;34m')
+    DIM=$(printf '\033[0;90m')
+    BOLD=$(printf '\033[1m')
+    RESET=$(printf '\033[0m')
 else
     RED='' GREEN='' YELLOW='' BLUE='' DIM='' BOLD='' RESET=''
 fi
@@ -240,7 +240,7 @@ main() {
     if "${INSTALL_DIR}/${BINARY_NAME}" --version > /dev/null 2>&1; then
         local installed_version
         installed_version=$("${INSTALL_DIR}/${BINARY_NAME}" --version 2>/dev/null || echo "unknown")
-        ok "memoryco ${installed_version} is ready"
+        ok "${installed_version} is ready"
     else
         ok "Installed successfully"
     fi
