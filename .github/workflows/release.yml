@@ -1,41 +1,99 @@
 # memoryco release workflow
-# 
+#
 # Builds pre-compiled binaries for all supported platforms and creates
-# a GitHub Release with checksums. The memory source is pulled from a
+# a GitHub Release with checksums. The source is pulled from the appropriate
 # private repo using a deploy key.
 #
-# Trigger: push a tag like v1.0.0
-#   git tag v1.0.0
-#   git push origin v1.0.0
+# Supports three binaries with independent release cadence:
+#   memoryco        - Core memory MCP server
+#   memoryco_fs     - Filesystem MCP server
+#   memoryco_agents - Agent spawner MCP server
+#
+# Trigger: push a binary-prefixed tag:
+#   git tag memoryco-v1.0.0        && git push origin memoryco-v1.0.0
+#   git tag memoryco_fs-v1.0.0     && git push origin memoryco_fs-v1.0.0
+#   git tag memoryco_agents-v0.2.1 && git push origin memoryco_agents-v0.2.1
 #
 # Required secrets:
-#   MEMORY_REPO_SSH_KEY - Deploy key with read access to the private memory repo
-#   MEMORY_REPO         - Full repo URL (e.g., git@github.com:memoryco/memory.git)
+#   MEMORY_REPO             - Clone URL for memoryco private source repo
+#   MEMORY_REPO_SSH_KEY     - Deploy key with read access
+#   FILESYSTEM_REPO         - Clone URL for memoryco_fs private source repo
+#   FILESYSTEM_REPO_SSH_KEY - Deploy key with read access
+#   AGENTS_REPO             - Clone URL for memoryco_agents private source repo
+#   AGENTS_REPO_SSH_KEY     - Deploy key with read access
 
 name: Release
 
 on:
   push:
-    tags: ["v*"]
+    tags:
+      - "memoryco-v*"
+      - "memoryco_fs-v*"
+      - "memoryco_agents-v*"
 
   # Allow manual trigger for testing
   workflow_dispatch:
     inputs:
-      tag:
-        description: "Version tag (e.g., v1.0.0)"
+      binary_name:
+        description: "Binary name (memoryco, memoryco_fs, or memoryco_agents)"
+        required: true
+        default: "memoryco"
+      version:
+        description: "Version (e.g., v1.0.0)"
         required: true
 
 env:
-  BINARY_NAME: memoryco
   CARGO_TERM_COLOR: always
 
 permissions:
   contents: write  # needed to create releases
 
 jobs:
-  # ─── Build matrix ──────────────────────────────────────────────────────────
+  # ─── Determine build parameters ─────────────────────────────────────────────
+  #
+  # Parse the tag (or workflow_dispatch inputs) to determine which binary to
+  # build and what version to tag it. All downstream jobs consume these outputs.
+  determine:
+    name: Determine Build Parameters
+    runs-on: ubuntu-latest
+
+    outputs:
+      binary_name: ${{ steps.parse.outputs.binary_name }}
+      version:     ${{ steps.parse.outputs.version }}
+      tag:         ${{ steps.parse.outputs.tag }}
+
+    steps:
+      - name: Parse tag / inputs
+        id: parse
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            BINARY="${{ github.event.inputs.binary_name }}"
+            # Normalise: ensure version starts with v
+            VERSION="v${{ github.event.inputs.version }}"
+            VERSION="v${VERSION#v}"
+            TAG="${BINARY}-${VERSION}"
+          else
+            TAG="${GITHUB_REF_NAME}"
+            # Strip the -v{semver} suffix to get binary name.
+            # Works for memoryco, memoryco_fs, memoryco_agents because none
+            # of the names themselves contain a -v sequence.
+            BINARY="${TAG%-v*}"
+            # Extract the version part and re-prefix with v
+            VERSION="v${TAG##*-v}"
+          fi
+
+          echo "binary_name=${BINARY}" >> "$GITHUB_OUTPUT"
+          echo "version=${VERSION}"     >> "$GITHUB_OUTPUT"
+          echo "tag=${TAG}"             >> "$GITHUB_OUTPUT"
+
+          echo "Binary : ${BINARY}"
+          echo "Version: ${VERSION}"
+          echo "Tag    : ${TAG}"
+
+  # ─── Build matrix ───────────────────────────────────────────────────────────
   build:
     name: Build ${{ matrix.target }}
+    needs: determine
     runs-on: ${{ matrix.os }}
 
     strategy:
@@ -51,30 +109,44 @@ jobs:
           - target: aarch64-unknown-linux-gnu
             os: ubuntu-24.04-arm
 
+    env:
+      BINARY_NAME: ${{ needs.determine.outputs.binary_name }}
+      VERSION:     ${{ needs.determine.outputs.version }}
+
     steps:
       - name: Checkout dist repo
         uses: actions/checkout@v4
 
-      - name: Determine version
-        id: version
-        run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            echo "tag=${{ github.event.inputs.tag }}" >> "$GITHUB_OUTPUT"
-          else
-            echo "tag=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
-          fi
+      # GitHub Actions doesn't support dynamic secret names, so we use
+      # conditional steps to load the correct repo URL and deploy key
+      # into environment variables based on the binary being built.
 
-      - name: Clone memory source
-        env:
-          DEPLOY_KEY: ${{ secrets.MEMORY_REPO_SSH_KEY }}
-          MEMORY_REPO: ${{ secrets.MEMORY_REPO }}
+      - name: Select repo credentials (memoryco)
+        if: needs.determine.outputs.binary_name == 'memoryco'
+        run: |
+          echo "REPO_URL=${{ secrets.MEMORY_REPO }}"         >> "$GITHUB_ENV"
+          echo "DEPLOY_KEY=${{ secrets.MEMORY_REPO_SSH_KEY }}" >> "$GITHUB_ENV"
+
+      - name: Select repo credentials (memoryco_fs)
+        if: needs.determine.outputs.binary_name == 'memoryco_fs'
+        run: |
+          echo "REPO_URL=${{ secrets.FILESYSTEM_REPO }}"             >> "$GITHUB_ENV"
+          echo "DEPLOY_KEY=${{ secrets.FILESYSTEM_REPO_SSH_KEY }}" >> "$GITHUB_ENV"
+
+      - name: Select repo credentials (memoryco_agents)
+        if: needs.determine.outputs.binary_name == 'memoryco_agents'
+        run: |
+          echo "REPO_URL=${{ secrets.AGENTS_REPO }}"             >> "$GITHUB_ENV"
+          echo "DEPLOY_KEY=${{ secrets.AGENTS_REPO_SSH_KEY }}" >> "$GITHUB_ENV"
+
+      - name: Clone source
         run: |
           mkdir -p ~/.ssh
           echo "$DEPLOY_KEY" > ~/.ssh/deploy_key
           chmod 600 ~/.ssh/deploy_key
           ssh-keyscan github.com >> ~/.ssh/known_hosts 2>/dev/null
           GIT_SSH_COMMAND="ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no" \
-            git clone --depth 1 "$MEMORY_REPO" memory-src
+            git clone --depth 1 "$REPO_URL" source
           rm -f ~/.ssh/deploy_key
 
       - name: Install Rust toolchain
@@ -90,22 +162,20 @@ jobs:
           sudo apt-get install -y pkg-config
 
       - name: Build
-        working-directory: memory-src
+        working-directory: source
         run: |
           cargo build --release --target ${{ matrix.target }}
 
       - name: Package binary
         run: |
-          VERSION="${{ steps.version.outputs.tag }}"
           TARGET="${{ matrix.target }}"
           ARCHIVE="${BINARY_NAME}-${VERSION}-${TARGET}.tar.gz"
 
-          # Find the binary (package is now named memoryco)
-          BIN="memory-src/target/${TARGET}/release/${BINARY_NAME}"
+          BIN="source/target/${TARGET}/release/${BINARY_NAME}"
 
           if [ ! -f "$BIN" ]; then
             echo "ERROR: Binary not found at $BIN"
-            ls -la "memory-src/target/${TARGET}/release/" || true
+            ls -la "source/target/${TARGET}/release/" || true
             exit 1
           fi
 
@@ -115,14 +185,14 @@ jobs:
           # Create archive
           tar czf "$ARCHIVE" "$BINARY_NAME"
 
-          # Generate checksum
+          # Generate per-target checksum
           if command -v sha256sum > /dev/null 2>&1; then
             sha256sum "$ARCHIVE" > "${ARCHIVE}.sha256"
           else
             shasum -a 256 "$ARCHIVE" > "${ARCHIVE}.sha256"
           fi
 
-          echo "archive=${ARCHIVE}" >> "$GITHUB_ENV"
+          echo "archive=${ARCHIVE}"       >> "$GITHUB_ENV"
           echo "checksum=${ARCHIVE}.sha256" >> "$GITHUB_ENV"
 
           echo "=== Package ==="
@@ -139,24 +209,19 @@ jobs:
             ${{ env.checksum }}
           if-no-files-found: error
 
-  # ─── Create release ────────────────────────────────────────────────────────
+  # ─── Create release ─────────────────────────────────────────────────────────
   release:
     name: Create Release
-    needs: build
+    needs: [determine, build]
     runs-on: ubuntu-latest
+
+    env:
+      BINARY_NAME: ${{ needs.determine.outputs.binary_name }}
+      VERSION:     ${{ needs.determine.outputs.version }}
 
     steps:
       - name: Checkout dist repo
         uses: actions/checkout@v4
-
-      - name: Determine version
-        id: version
-        run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            echo "tag=${{ github.event.inputs.tag }}" >> "$GITHUB_OUTPUT"
-          else
-            echo "tag=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
-          fi
 
       - name: Download all artifacts
         uses: actions/download-artifact@v4
@@ -166,21 +231,24 @@ jobs:
       - name: Collect release files
         run: |
           mkdir release
-          VERSION="${{ steps.version.outputs.tag }}"
 
           # Move all archives and individual checksums into release/
           find artifacts -type f \( -name "*.tar.gz" -o -name "*.sha256" \) \
             -exec mv {} release/ \;
 
-          # Create combined checksums file
+          # Create combined checksums file from per-target checksums
           cd release
           cat *.sha256 > "${BINARY_NAME}-${VERSION}-checksums.sha256"
 
-          # Clean up individual checksum files
+          # Clean up the individual per-target checksum files
           find . -name "*.tar.gz.sha256" -delete
 
-          # Include install script as a release asset
-          cp "${GITHUB_WORKSPACE}/install.sh" .
+          # Include the relevant install script as a release asset
+          case "$BINARY_NAME" in
+            memoryco)        cp "${GITHUB_WORKSPACE}/install.sh" . ;;
+            memoryco_fs)     cp "${GITHUB_WORKSPACE}/install_fs.sh" . ;;
+            memoryco_agents) cp "${GITHUB_WORKSPACE}/install_agents.sh" . ;;
+          esac
 
           echo "=== Release files ==="
           ls -lh
@@ -191,15 +259,13 @@ jobs:
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ steps.version.outputs.tag }}
-          name: "memoryco ${{ steps.version.outputs.tag }}"
-          draft: false
-          prerelease: ${{ contains(steps.version.outputs.tag, '-') }}
+          tag_name:  ${{ needs.determine.outputs.tag }}
+          name:      "${{ needs.determine.outputs.binary_name }} ${{ needs.determine.outputs.version }}"
+          draft:     false
+          prerelease: ${{ contains(needs.determine.outputs.version, '-') }}
           generate_release_notes: false
           body: |
-            ## memoryco ${{ steps.version.outputs.tag }}
-
-            Cognitive memory for AI. Local-first, biologically-inspired.
+            ## ${{ needs.determine.outputs.binary_name }} ${{ needs.determine.outputs.version }}
 
             ### Install
 
@@ -213,7 +279,7 @@ jobs:
 
             Verify your download:
             ```bash
-            sha256sum -c memoryco-${{ steps.version.outputs.tag }}-checksums.sha256
+            sha256sum -c ${{ needs.determine.outputs.binary_name }}-${{ needs.determine.outputs.version }}-checksums.sha256
             ```
 
             ### What's new

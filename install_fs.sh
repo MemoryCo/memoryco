@@ -1,28 +1,25 @@
 #!/bin/sh
-# memoryco install script
-# Usage: curl -fsSL https://memoryco.ai/install.sh | sh
+# memoryco_fs install script
+# Usage: curl -fsSL https://memoryco.ai/install_fs.sh | sh
 #
 # Detects OS and architecture, downloads the appropriate binary,
 # and installs it to ~/.local/bin (or /usr/local/bin with sudo).
 #
 # Environment variables:
-#   MEMORYCO_VERSION  - specific version to install (default: latest)
-#   MEMORYCO_DIR      - install directory (default: ~/.local/bin)
-#   MEMORYCO_BASE_URL - override download base URL
+#   MEMORYCO_FS_VERSION  - specific version to install (default: latest)
+#   MEMORYCO_FS_DIR      - install directory (default: ~/.local/bin)
+#   MEMORYCO_BASE_URL    - override download base URL
 
 set -e
 
 # ─── Configuration ──────────────────────────────────────────────────────────
 
-REPO="memoryco/memoryco"
-BINARY_NAME="memoryco"
+REPO="memoryco/releases"
+BINARY_NAME="memoryco_fs"
 DEFAULT_INSTALL_DIR="$HOME/.local/bin"
 
 BASE_URL="${MEMORYCO_BASE_URL:-https://github.com/${REPO}/releases}"
-INSTALL_DIR="${MEMORYCO_DIR:-$DEFAULT_INSTALL_DIR}"
-
-# Companion binaries are released from the dist repo
-RELEASES_BASE_URL="${MEMORYCO_BASE_URL:-https://github.com/memoryco/releases/releases}"
+INSTALL_DIR="${MEMORYCO_FS_DIR:-$DEFAULT_INSTALL_DIR}"
 
 # ─── Colors (if terminal supports them) ─────────────────────────────────────
 
@@ -111,9 +108,9 @@ fetch() {
 # ─── Version resolution ─────────────────────────────────────────────────────
 
 resolve_version() {
-    if [ -n "$MEMORYCO_VERSION" ]; then
+    if [ -n "${MEMORYCO_FS_VERSION:-}" ]; then
         # Strip leading 'v' if present for consistency, then add it back
-        echo "v${MEMORYCO_VERSION#v}"
+        echo "v${MEMORYCO_FS_VERSION#v}"
         return
     fi
 
@@ -131,10 +128,10 @@ resolve_version() {
     fi
 
     if [ -z "$resolved" ]; then
-        fail "Could not determine latest version. Set MEMORYCO_VERSION and try again."
+        fail "Could not determine latest version. Set MEMORYCO_FS_VERSION and try again."
     fi
 
-    # Extract tag from URL: .../releases/tag/v1.0.0 -> v1.0.0
+    # Extract tag from URL: .../releases/tag/memoryco_fs-v1.0.0 -> v1.0.0
     echo "$resolved" | grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+[a-zA-Z0-9._-]*' | tail -1
 }
 
@@ -175,129 +172,10 @@ verify_checksum() {
     ok "Checksum verified"
 }
 
-# ─── Companion installers ────────────────────────────────────────────────────
-#
-# resolve_companion_version BINARY
-#   Uses the GitHub releases API to find the latest tag for the given binary.
-#   Falls back to MEMORYCO_FS_VERSION / MEMORYCO_AGENTS_VERSION env vars.
-
-resolve_companion_version() {
-    local binary="$1"
-    local version_override
-
-    case "$binary" in
-        memoryco_fs)     version_override="${MEMORYCO_FS_VERSION:-}" ;;
-        memoryco_agents) version_override="${MEMORYCO_AGENTS_VERSION:-}" ;;
-        *)               version_override="" ;;
-    esac
-
-    if [ -n "$version_override" ]; then
-        echo "v${version_override#v}"
-        return 0
-    fi
-
-    info "Fetching latest ${binary} version..."
-
-    local api_url="https://api.github.com/repos/memoryco/releases/releases"
-    local tag
-
-    if [ "$DOWNLOADER" = "curl" ]; then
-        tag=$(curl -fsSL "$api_url" 2>/dev/null \
-            | grep -o "\"tag_name\":\"${binary}-v[^\"]*\"" \
-            | head -1 \
-            | grep -oE "${binary}-v[0-9]+\.[0-9]+\.[0-9]+[a-zA-Z0-9._-]*")
-    else
-        tag=$(wget -qO- "$api_url" 2>/dev/null \
-            | grep -o "\"tag_name\":\"${binary}-v[^\"]*\"" \
-            | head -1 \
-            | grep -oE "${binary}-v[0-9]+\.[0-9]+\.[0-9]+[a-zA-Z0-9._-]*")
-    fi
-
-    if [ -z "$tag" ]; then
-        return 1
-    fi
-
-    echo "v${tag##*-v}"
-}
-
-# install_companion_binary BINARY
-#   Downloads, verifies, and installs a companion binary into INSTALL_DIR.
-#   Runs in a subshell so failures don't abort the parent script.
-
-install_companion_binary() {
-    local binary="$1"
-    local companion_version
-
-    companion_version=$(resolve_companion_version "$binary") || {
-        warn "Could not determine latest version for ${binary} — skipping"
-        return 0
-    }
-
-    info "Version:  ${BOLD}${companion_version}${RESET}"
-
-    local archive_name="${binary}-${companion_version}-${TARGET}.tar.gz"
-    local checksums_name="${binary}-${companion_version}-checksums.sha256"
-    local download_url="${RELEASES_BASE_URL}/download/${companion_version}/${archive_name}"
-    local checksums_url="${RELEASES_BASE_URL}/download/${companion_version}/${checksums_name}"
-
-    local tmp
-    tmp=$(mktemp -d)
-    # Clean up on exit from this subshell
-    trap 'rm -rf "$tmp"' EXIT
-
-    info "Downloading ${archive_name}..."
-    download "$download_url" "${tmp}/${archive_name}" 2>/dev/null || {
-        warn "Download of ${binary} failed — skipping"
-        return 0
-    }
-
-    download "$checksums_url" "${tmp}/${checksums_name}" 2>/dev/null || true
-    verify_checksum "${tmp}/${archive_name}" "${tmp}/${checksums_name}" "$archive_name"
-
-    info "Extracting..."
-    tar xzf "${tmp}/${archive_name}" -C "$tmp"
-
-    local bin_path
-    bin_path=$(find "$tmp" -name "$binary" -type f -perm -u+x 2>/dev/null | head -1)
-    if [ -z "$bin_path" ]; then
-        bin_path=$(find "$tmp" -name "$binary" -type f | head -1)
-    fi
-
-    if [ -z "$bin_path" ]; then
-        warn "Could not find ${binary} binary in archive — skipping"
-        return 0
-    fi
-
-    chmod +x "$bin_path"
-
-    if [ -w "$INSTALL_DIR" ]; then
-        mv "$bin_path" "${INSTALL_DIR}/${binary}"
-    else
-        sudo mv "$bin_path" "${INSTALL_DIR}/${binary}"
-    fi
-
-    ok "Installed ${binary} to ${BOLD}${INSTALL_DIR}/${binary}${RESET}"
-
-    # Configure MCP clients
-    "${INSTALL_DIR}/${binary}" install --yes 2>&1 || true
-}
-
 # ─── Main ────────────────────────────────────────────────────────────────────
 
 main() {
-    # ── Parse arguments ───────────────────────────────────────────────────
-    WITH_FS=0
-    WITH_AGENTS=0
-
-    for arg in "$@"; do
-        case "$arg" in
-            --with-fs)     WITH_FS=1 ;;
-            --with-agents) WITH_AGENTS=1 ;;
-            --all)         WITH_FS=1; WITH_AGENTS=1 ;;
-        esac
-    done
-
-    printf "\n${BOLD}memoryco${RESET} ${DIM}— cognitive memory for AI${RESET}\n\n"
+    printf "\n${BOLD}memoryco_fs${RESET} ${DIM}— filesystem tools for AI${RESET}\n\n"
 
     # Detect environment
     DOWNLOADER=$(detect_downloader)
@@ -385,18 +263,6 @@ main() {
             ;;
     esac
 
-    # ── First-run setup ──────────────────────────────────────────────────
-    # Cache the embedding model so first MCP launch isn't slow.
-
-    printf "\n"
-    info "Preparing cognitive engine (first-time only)..."
-
-    if "${INSTALL_DIR}/${BINARY_NAME}" cache 2>/dev/null; then
-        ok "Embedding model cached"
-    else
-        printf "  ${DIM}Embedding model will download on first use${RESET}\n"
-    fi
-
     # Auto-detect and configure MCP clients
     printf "\n"
     info "Detecting MCP clients..."
@@ -407,27 +273,8 @@ main() {
     printf "  ${BOLD}Quick start:${RESET}\n\n"
     printf "  Your MCP clients have been auto-configured.\n"
     printf "  Just restart your AI client and start chatting.\n\n"
-    printf "  Your AI now remembers. ${GREEN}◆${RESET}\n\n"
-    printf "  ${DIM}Docs:   https://memoryco.ai/docs${RESET}\n"
-    printf "  ${DIM}Data:   ~/.memoryco/${RESET}\n"
-    printf "  ${DIM}Health: memoryco doctor${RESET}\n\n"
-
-    # ── Companion installs ────────────────────────────────────────────────
-    if [ "$WITH_FS" = "1" ]; then
-        printf "${DIM}─────────────────────────────────────────${RESET}\n\n"
-        printf "${BOLD}memoryco_fs${RESET} ${DIM}— filesystem tools for AI${RESET}\n\n"
-        info "Platform: ${BOLD}${ARCH}-${OS}${RESET} (${TARGET})"
-        (install_companion_binary "memoryco_fs") \
-            || warn "memoryco_fs installation failed — memoryco is still installed and working"
-    fi
-
-    if [ "$WITH_AGENTS" = "1" ]; then
-        printf "${DIM}─────────────────────────────────────────${RESET}\n\n"
-        printf "${BOLD}memoryco_agents${RESET} ${DIM}— AI agent management${RESET}\n\n"
-        info "Platform: ${BOLD}${ARCH}-${OS}${RESET} (${TARGET})"
-        (install_companion_binary "memoryco_agents") \
-            || warn "memoryco_agents installation failed — memoryco is still installed and working"
-    fi
+    printf "  Your AI now has filesystem tools. ${GREEN}◆${RESET}\n\n"
+    printf "  ${DIM}Docs: https://memoryco.ai/docs${RESET}\n\n"
 }
 
 main "$@"
