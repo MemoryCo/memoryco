@@ -14,7 +14,7 @@ set -e
 
 # ─── Configuration ──────────────────────────────────────────────────────────
 
-REPO="memoryco/memoryco"
+REPO="MemoryCo/memoryco"
 BINARY_NAME="memoryco"
 DEFAULT_INSTALL_DIR="$HOME/.local/bin"
 
@@ -22,7 +22,7 @@ BASE_URL="${MEMORYCO_BASE_URL:-https://github.com/${REPO}/releases}"
 INSTALL_DIR="${MEMORYCO_DIR:-$DEFAULT_INSTALL_DIR}"
 
 # Companion binaries are released from the dist repo
-RELEASES_BASE_URL="${MEMORYCO_BASE_URL:-https://github.com/memoryco/releases/releases}"
+RELEASES_BASE_URL="${MEMORYCO_BASE_URL:-https://github.com/MemoryCo/memoryco/releases}"
 
 # ─── Colors (if terminal supports them) ─────────────────────────────────────
 
@@ -198,7 +198,7 @@ resolve_companion_version() {
 
     info "Fetching latest ${binary} version..."
 
-    local api_url="https://api.github.com/repos/memoryco/releases/releases"
+    local api_url="https://api.github.com/repos/MemoryCo/memoryco/releases"
     local tag
 
     if [ "$DOWNLOADER" = "curl" ]; then
