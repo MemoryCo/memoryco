@@ -65,8 +65,8 @@ jobs:
         run: |
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             BINARY="${{ github.event.inputs.binary_name }}"
-            # Normalise: ensure version starts with v
-            VERSION="v${{ github.event.inputs.version }}"
+            # Normalise: ensure version starts with v (handles both "0.9.9" and "v0.9.9")
+            VERSION="${{ github.event.inputs.version }}"
             VERSION="v${VERSION#v}"
             TAG="${BINARY}-${VERSION}"
           else
