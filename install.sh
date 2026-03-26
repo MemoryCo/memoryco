@@ -237,8 +237,8 @@ install_companion_binary() {
 
     local archive_name="${binary}-${companion_version}-${TARGET}.tar.gz"
     local checksums_name="${binary}-${companion_version}-checksums.sha256"
-    local download_url="${RELEASES_BASE_URL}/download/${companion_version}/${archive_name}"
-    local checksums_url="${RELEASES_BASE_URL}/download/${companion_version}/${checksums_name}"
+    local download_url="${RELEASES_BASE_URL}/download/${binary}-${companion_version}/${archive_name}"
+    local checksums_url="${RELEASES_BASE_URL}/download/${binary}-${companion_version}/${checksums_name}"
 
     local tmp
     tmp=$(mktemp -d)
@@ -312,8 +312,8 @@ main() {
     # Build download URLs
     ARCHIVE_NAME="${BINARY_NAME}-${VERSION}-${TARGET}.tar.gz"
     CHECKSUMS_NAME="${BINARY_NAME}-${VERSION}-checksums.sha256"
-    DOWNLOAD_URL="${BASE_URL}/download/${VERSION}/${ARCHIVE_NAME}"
-    CHECKSUMS_URL="${BASE_URL}/download/${VERSION}/${CHECKSUMS_NAME}"
+    DOWNLOAD_URL="${BASE_URL}/download/${BINARY_NAME}-${VERSION}/${ARCHIVE_NAME}"
+    CHECKSUMS_URL="${BASE_URL}/download/${BINARY_NAME}-${VERSION}/${CHECKSUMS_NAME}"
 
     # Create temp directory
     TMP_DIR=$(mktemp -d)
