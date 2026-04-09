@@ -142,8 +142,22 @@ jobs:
             exit 0
           fi
 
+          # Temporarily rewrite SSH git deps to HTTPS so cargo can fetch private deps
+          for f in Cargo.toml Cargo.lock; do
+            if [ -f "$f" ]; then
+              sed -i "s|ssh://git@github.com/|https://x-access-token:${TOKEN}@github.com/|g" "$f"
+            fi
+          done
+
           # Update Cargo.lock to match
           cargo update --workspace
+
+          # Revert HTTPS+token back to SSH (don't commit tokens)
+          for f in Cargo.toml Cargo.lock; do
+            if [ -f "$f" ]; then
+              sed -i "s|https://x-access-token:${TOKEN}@github.com/|ssh://git@github.com/|g" "$f"
+            fi
+          done
 
           git config user.name "memoryco-release[bot]"
           git config user.email "release@memoryco.ai"
