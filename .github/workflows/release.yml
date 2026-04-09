@@ -87,10 +87,76 @@ jobs:
           echo "Version: ${VERSION}"
           echo "Tag    : ${TAG}"
 
+  # ─── Bump source repo version ───────────────────────────────────────────────
+  #
+  # Update Cargo.toml + Cargo.lock in the source repo and tag the commit.
+  # Runs before the build so compiled binaries report the correct version.
+  bump-version:
+    name: Bump Cargo.toml Version
+    needs: determine
+    runs-on: ubuntu-latest
+
+    env:
+      BINARY_NAME: ${{ needs.determine.outputs.binary_name }}
+      VERSION:     ${{ needs.determine.outputs.version }}
+
+    steps:
+      - name: Generate GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.MEMORYCO_APP_ID }}
+          private-key: ${{ secrets.MEMORYCO_APP_PRIVATE_KEY }}
+          owner: memoryco
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Bump version, update lock, tag
+        run: |
+          SEMVER="${VERSION#v}"
+          TOKEN="${{ steps.app-token.outputs.token }}"
+
+          case "$BINARY_NAME" in
+            memoryco)        REPO="MemoryCo/memory" ;;
+            memoryco_fs)     REPO="MemoryCo/filesystem" ;;
+            memoryco_agents) REPO="MemoryCo/agents" ;;
+          esac
+
+          REPO_URL="https://x-access-token:${TOKEN}@github.com/${REPO}.git"
+
+          # Configure git auth for private deps (needed for cargo update)
+          git config --global url."https://x-access-token:${TOKEN}@github.com/".insteadOf "ssh://git@github.com/"
+          git config --global url."https://x-access-token:${TOKEN}@github.com/".insteadOf "git@github.com:"
+          git config --global url."https://x-access-token:${TOKEN}@github.com/".insteadOf "https://github.com/"
+
+          git clone "${REPO_URL}" source
+          cd source
+
+          # Update version in Cargo.toml (first occurrence — the [package] version)
+          sed -i "0,/^version = \".*\"/s//version = \"${SEMVER}\"/" Cargo.toml
+
+          # Bail if nothing changed (already at this version)
+          if git diff --quiet Cargo.toml; then
+            echo "Cargo.toml already at ${SEMVER}, skipping."
+            exit 0
+          fi
+
+          # Update Cargo.lock to match
+          cargo update --workspace
+
+          git config user.name "memoryco-release[bot]"
+          git config user.email "release@memoryco.ai"
+          git add Cargo.toml Cargo.lock
+          git commit -m "bump version to ${SEMVER}"
+          git tag "${VERSION}"
+          git push
+          git push origin "${VERSION}"
+
   # ─── Build matrix ───────────────────────────────────────────────────────────
   build:
     name: Build ${{ matrix.target }}
-    needs: determine
+    needs: [determine, bump-version]
     runs-on: ${{ matrix.os }}
 
     strategy:
