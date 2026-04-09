@@ -131,6 +131,11 @@ jobs:
           git config --global url."https://x-access-token:${TOKEN}@github.com/".insteadOf "https://github.com/"
 
           git clone "${REPO_URL}" source
+
+          # Clone path dependencies (siblings expected by Cargo.toml)
+          git clone --depth 1 https://github.com/MemoryCo/updater.git updater
+          git clone --depth 1 https://github.com/MemoryCo/llm.git llm
+
           cd source
 
           # Update version in Cargo.toml (first occurrence — the [package] version)
